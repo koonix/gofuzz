@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -18,9 +20,6 @@ import (
 	"syscall"
 	"time"
 )
-
-// maxForks is the maximum number of simultaneous `go test` commands to run
-const maxForks = 10
 
 // fuzz contains the name of a fuzz function and the package path it resides in
 type fuzz struct {
@@ -35,18 +34,22 @@ type result struct {
 	output string
 }
 
-// fuzzRgx is a regexp that matches go fuzz functions
-var fuzzRgx *regexp.Regexp
-
-func init() {
-	fuzzRgx = regexp.MustCompile(`^func\s+(Fuzz\w+)`)
-}
-
 func main() {
 
-	// success indicates what the exit status of gofuzz should be
-	var success atomic.Bool
-	success.Store(true)
+	// parse cli flags
+	maxParallel := flag.Int("parallel", 10, "max number of parallel tests")
+	runPtrn := flag.String("run", ".", "only run tests where path/to/package/FuzzFuncName matches against this regexp pattern")
+	root := flag.String("root", ".", "root dir of the go project")
+	goTest := flag.String("gotest", "go test", "command used for running tests, as whitespace-separated args")
+	flag.Parse()
+	runRgx := regexp.MustCompile(*runPtrn)
+	goTestFields := strings.Fields(*goTest)
+
+	// chdir to root
+	err := os.Chdir(*root)
+	if err != nil {
+		panic(fmt.Errorf(`could not change directory to "%s": %w`, *root, err))
+	}
 
 	// context allows canceling the running commands
 	ctx, cancel := context.WithCancelCause(context.Background())
@@ -66,6 +69,13 @@ func main() {
 		}
 	}()
 
+	// success indicates what the exit status of gofuzz should be
+	var success atomic.Bool
+	success.Store(true)
+
+	// fuzzRgx is a regexp that matches go fuzz functions
+	fuzzRgx := regexp.MustCompile(`^func\s+(Fuzz\w+)`)
+
 	// fuzzChan contains fuzz functions to run
 	fuzzChan := make(chan fuzz, 1024)
 
@@ -73,19 +83,19 @@ func main() {
 	go func() {
 		defer close(fuzzChan)
 		err := filepath.WalkDir(".", func(
-			path string,
+			p string,
 			entry fs.DirEntry,
 			err error,
 		) error {
 			if err != nil {
 				return err
 			}
-			if entry.IsDir() || !strings.HasSuffix(path, "_test.go") {
+			if entry.IsDir() || !strings.HasSuffix(p, "_test.go") {
 				return nil
 			}
-			file, err := os.Open(path)
+			file, err := os.Open(p)
 			if err != nil {
-				return fmt.Errorf(`could not open file "%s": %w`, path, err)
+				return fmt.Errorf(`could not open file "%s": %w`, p, err)
 			}
 			defer file.Close()
 			sc := bufio.NewScanner(file)
@@ -94,14 +104,18 @@ func main() {
 				if matches == nil || len(matches) < 2 {
 					continue
 				}
-				fuzzChan <- fuzz{
-					pkg: filepath.Dir(path),
-					fn:  matches[1],
+				pkg := path.Clean(path.Dir(filepath.ToSlash(p)))
+				fn := matches[1]
+				if runRgx.MatchString(pkg + fn) {
+					fuzzChan <- fuzz{
+						pkg: pkg,
+						fn:  fn,
+					}
 				}
 			}
 			err = sc.Err()
 			if err != nil {
-				return fmt.Errorf(`could not scan "%s": %w`, path, err)
+				return fmt.Errorf(`could not scan "%s": %w`, p, err)
 			}
 			return nil
 		})
@@ -122,7 +136,7 @@ func main() {
 
 	// fill spawnChan.
 	go func() {
-		for i := 0; i < maxForks; i++ {
+		for i := 0; i < *maxParallel; i++ {
 			spawnChan <- struct{}{}
 		}
 	}()
@@ -137,15 +151,15 @@ func main() {
 		}()
 		for fuzz := range fuzzChan {
 			<-spawnChan
-			cmd := exec.CommandContext(
-				ctx,
-				"go",
-				"test",
+			args := make([]string, len(goTestFields))
+			copy(args, goTestFields)
+			args = append(args,
+				"./"+fuzz.pkg,
 				fmt.Sprintf("-run=^%s$", fuzz.fn),
 				fmt.Sprintf("-fuzz=^%s$", fuzz.fn),
-				"-fuzztime=30s",
-				"./"+fuzz.pkg,
 			)
+			args = append(args, flag.Args()...)
+			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 			cmd.WaitDelay = 10 * time.Second
 			cmd.Cancel = func() error {
 				return cmd.Process.Signal(syscall.SIGTERM)
@@ -168,7 +182,7 @@ func main() {
 
 	// print fuzzing results
 	for r := range resultChan {
-		fmt.Printf("===== %s - %s() =====\n", r.pkg, r.fn)
+		fmt.Printf("===== %s/%s =====\n", r.pkg, r.fn)
 		fmt.Println(r.output)
 		if r.err != nil {
 			success.Store(false)
@@ -180,7 +194,7 @@ func main() {
 	}
 
 	// print the contents of seed corpus entry files
-	err := filepath.WalkDir(".", func(
+	err = filepath.WalkDir(".", func(
 		path string,
 		entry fs.DirEntry,
 		err error,
