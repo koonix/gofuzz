@@ -59,9 +59,6 @@ func main() {
 		syscall.SIGHUP,
 		syscall.SIGPIPE,
 		syscall.SIGQUIT,
-		syscall.SIGABRT,
-		syscall.SIGUSR1,
-		syscall.SIGUSR2,
 	)
 	go func() {
 		for sig := range sigChan {
