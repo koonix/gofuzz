@@ -31,8 +31,9 @@ Options:
 
 // fuzz contains the name of a fuzz function and the package path it resides in
 type fuzz struct {
-	fn  string
-	pkg string
+	fn       string
+	pkg      string
+	fullpath string
 }
 
 // result contains a fuzzing result
@@ -53,6 +54,7 @@ func main() {
 	runPtrn := flag.String("run", ".", "only run tests where path/to/package/FuzzFuncName matches against this regexp pattern")
 	root := flag.String("root", ".", "root dir of the go project")
 	goTest := flag.String("gotest", "go test", "command used for running tests, as whitespace-separated args")
+	list := flag.Bool("list", false, "list fuzz function paths and exit")
 	flag.Parse()
 	runRgx := regexp.MustCompile(*runPtrn)
 	goTestFields := strings.Fields(*goTest)
@@ -85,6 +87,15 @@ func main() {
 	var success atomic.Bool
 	success.Store(true)
 
+	// exit with the appropriate status
+	defer func() {
+		if success.Load() {
+			os.Exit(0)
+		} else {
+			os.Exit(1)
+		}
+	}()
+
 	// fuzzRgx is a regexp that matches go fuzz functions
 	fuzzRgx := regexp.MustCompile(`^func\s+(Fuzz\w+)`)
 
@@ -116,12 +127,14 @@ func main() {
 				if matches == nil || len(matches) < 2 {
 					continue
 				}
-				pkg := path.Clean(path.Dir(filepath.ToSlash(p)))
 				fn := matches[1]
-				if runRgx.MatchString(pkg + fn) {
+				pkg := path.Clean(path.Dir(filepath.ToSlash(p)))
+				fullpath := pkg + "/" + fn
+				if runRgx.MatchString(fullpath) {
 					fuzzChan <- fuzz{
-						pkg: pkg,
-						fn:  fn,
+						fn:       fn,
+						pkg:      pkg,
+						fullpath: fullpath,
 					}
 				}
 			}
@@ -136,6 +149,14 @@ func main() {
 			success.Store(false)
 		}
 	}()
+
+	// if the list option is set, list fuzz function paths and exit
+	if *list {
+		for fuzz := range fuzzChan {
+			fmt.Println(fuzz.fullpath)
+		}
+		return
+	}
 
 	// resultChan contains fuzzing results
 	resultChan := make(chan result, 1024)
@@ -235,12 +256,5 @@ func main() {
 	})
 	if err != nil {
 		panic(fmt.Errorf("could not walk dir: %w", err))
-	}
-
-	// exit with the appropriate status
-	if success.Load() == true {
-		os.Exit(0)
-	} else {
-		os.Exit(1)
 	}
 }
