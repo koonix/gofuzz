@@ -19,13 +19,18 @@ gofuzz -- -fuzztime=10s
 Elaborate example:
 
 ```sh
-gofuzz -parallel=5 -run='^FuzzSomeFunc$|^some/pkg/FuzzAnotherFunc$' -- -fuzztime=30s -fuzzminimizetime=2m
+gofuzz -parallel=5 -run='^(FuzzFunc1|some/pkg/FuzzFunc2)$' -- -fuzztime=30s -fuzzminimizetime=2m
 ```
 
 Usage:
 
 ```
-Usage of ./gofuzz:
+Usage: gofuzz [OPTIONS...] [-- GOTESTARGS...]
+
+gofuzz runs Golang fuzz tests in parallel.
+GOTESTARGS are extra args passed to the go test command.
+
+Options:
   -gotest string
     	command used for running tests, as whitespace-separated args (default "go test")
   -parallel int
