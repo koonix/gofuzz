@@ -21,6 +21,14 @@ import (
 	"time"
 )
 
+const helpText = `Usage: gofuzz [OPTIONS...] [-- GOTESTARGS...]
+
+gofuzz runs Golang fuzz tests in parallel.
+GOTESTARGS are extra args passed to the go test command.
+
+Options:
+`
+
 // fuzz contains the name of a fuzz function and the package path it resides in
 type fuzz struct {
 	fn  string
@@ -36,7 +44,11 @@ type result struct {
 
 func main() {
 
-	// parse cli flags
+	// handle cli flags
+	flag.Usage = func() {
+		fmt.Fprint(os.Stderr, helpText)
+		flag.PrintDefaults()
+	}
 	maxParallel := flag.Int("parallel", 10, "max number of parallel tests")
 	runPtrn := flag.String("run", ".", "only run tests where path/to/package/FuzzFuncName matches against this regexp pattern")
 	root := flag.String("root", ".", "root dir of the go project")
