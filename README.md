@@ -10,16 +10,16 @@ go install github.com/koonix/gofuzz@latest
 
 ## Usage
 
-Simple example:
+Example 1:
 
 ```sh
 gofuzz -- -fuzztime=10s
 ```
 
-Elaborate example:
+Example 2:
 
 ```sh
-gofuzz -parallel=5 -run='^(FuzzFunc1|some/pkg/FuzzFunc2)$' -- -fuzztime=30s -fuzzminimizetime=2m
+gofuzz -parallel=5 -match='/FuzzFunc1$|^some/pkg/FuzzFunc2$' -- -fuzztime=30s -fuzzminimizetime=2m
 ```
 
 Usage:
@@ -33,10 +33,12 @@ GOTESTARGS are extra args passed to the go test command.
 Options:
   -gotest string
     	command used for running tests, as whitespace-separated args (default "go test")
+  -list
+    	list fuzz function paths and exit
+  -match string
+    	only operate on functions where this regexp matches against path/to/package/FuzzFuncName (default ".")
   -parallel int
     	max number of parallel tests (default 10)
   -root string
     	root dir of the go project (default ".")
-  -run string
-    	only run tests where path/to/package/FuzzFuncName matches against this regexp pattern (default ".")
 ```
