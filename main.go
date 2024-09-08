@@ -51,16 +51,23 @@ func main() {
 		flag.PrintDefaults()
 	}
 	maxParallel := flag.Int("parallel", 10, "max number of parallel tests")
-	runPtrn := flag.String("run", ".", "only run tests where path/to/package/FuzzFuncName matches against this regexp pattern")
+	matchPtrn := flag.String("match", ".", "only operate on functions where this regexp matches against path/to/package/FuzzFuncName")
 	root := flag.String("root", ".", "root dir of the go project")
 	goTest := flag.String("gotest", "go test", "command used for running tests, as whitespace-separated args")
 	list := flag.Bool("list", false, "list fuzz function paths and exit")
 	flag.Parse()
-	runRgx := regexp.MustCompile(*runPtrn)
+
+	// split goTest by whitespace
 	goTestFields := strings.Fields(*goTest)
 
+	// compile matchPtrn
+	matchRgx, err := regexp.Compile(*matchPtrn)
+	if err != nil {
+		panic(fmt.Errorf("the -match regexp is invalid: %w", err))
+	}
+
 	// chdir to root
-	err := os.Chdir(*root)
+	err = os.Chdir(*root)
 	if err != nil {
 		panic(fmt.Errorf(`could not change directory to "%s": %w`, *root, err))
 	}
@@ -130,7 +137,7 @@ func main() {
 				fn := matches[1]
 				pkg := path.Clean(path.Dir(filepath.ToSlash(p)))
 				fullpath := pkg + "/" + fn
-				if runRgx.MatchString(fullpath) {
+				if matchRgx.MatchString(fullpath) {
 					fuzzChan <- fuzz{
 						fn:       fn,
 						pkg:      pkg,
