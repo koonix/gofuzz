@@ -57,6 +57,21 @@ func main() {
 	list := flag.Bool("list", false, "list fuzz function paths and exit")
 	flag.Parse()
 
+	// check for go.mod if -root is not set
+	rootSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "root" {
+			rootSet = true
+		}
+	})
+	if !rootSet {
+		_, err := os.Stat("go.mod")
+		if errors.Is(err, os.ErrNotExist) {
+			panic("no go.mod found in current directory;\n" +
+				"set -root explicitly to override the go.mod check")
+		}
+	}
+
 	// split goTest by whitespace
 	goTestFields := strings.Fields(*goTest)
 
