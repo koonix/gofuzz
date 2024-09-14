@@ -67,8 +67,8 @@ func main() {
 	if !rootSet {
 		_, err := os.Stat("go.mod")
 		if errors.Is(err, os.ErrNotExist) {
-			panic("no go.mod found in current directory;\n" +
-				"set -root explicitly to override the go.mod check")
+			die("no go.mod found in current directory.\n" +
+				"set -root explicitly to override the go.mod check.")
 		}
 	}
 
@@ -78,13 +78,13 @@ func main() {
 	// compile matchPtrn
 	matchRgx, err := regexp.Compile(*matchPtrn)
 	if err != nil {
-		panic(fmt.Errorf("the -match regexp is invalid: %w", err))
+		die(fmt.Errorf("the -match regexp is invalid: %w", err))
 	}
 
 	// chdir to root
 	err = os.Chdir(*root)
 	if err != nil {
-		panic(fmt.Errorf(`could not change directory to "%s": %w`, *root, err))
+		die(fmt.Errorf(`could not change directory to "%s": %w`, *root, err))
 	}
 
 	// context allows canceling the running commands
@@ -277,6 +277,11 @@ func main() {
 		return nil
 	})
 	if err != nil {
-		panic(fmt.Errorf("could not walk dir: %w", err))
+		die(fmt.Errorf("could not walk dir: %w", err))
 	}
+}
+
+func die(v any) {
+	fmt.Println(v)
+	os.Exit(1)
 }
