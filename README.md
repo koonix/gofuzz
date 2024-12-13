@@ -29,6 +29,23 @@ To configure which fuzz tests to run and the number of tests running in parallel
 gofuzz -match='/FuzzFunc1$|^some/pkg/FuzzFunc2$' -parallel=5
 ```
 
+Use in GitHub Actions:
+
+```yaml
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Run fuzz tests
+        run: go run github.com/koonix/gofuzz@latest -- -fuzztime=30s
+```
+
 Full usage:
 
 ```
