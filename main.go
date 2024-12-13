@@ -51,7 +51,7 @@ func main() {
 		flag.PrintDefaults()
 	}
 	maxParallel := flag.Int("parallel", 10, "max number of parallel tests")
-	matchPtrn := flag.String("match", ".", "only operate on functions where this regexp matches against path/to/package/FuzzFuncName")
+	matchPtrn := flag.String("match", ".", `only operate on functions where this regexp matches against "path/to/package/FuzzFuncName"`)
 	root := flag.String("root", ".", "root dir of the go project")
 	goTest := flag.String("gotest", "go test", "command used for running tests, as whitespace-separated args")
 	list := flag.Bool("list", false, "list fuzz function paths and exit")

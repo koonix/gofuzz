@@ -36,7 +36,7 @@ Options:
   -list
     	list fuzz function paths and exit
   -match string
-    	only operate on functions where this regexp matches against path/to/package/FuzzFuncName (default ".")
+    	only operate on functions where this regexp matches against "path/to/package/FuzzFuncName" (default ".")
   -parallel int
     	max number of parallel tests (default 10)
   -root string
