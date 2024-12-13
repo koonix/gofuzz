@@ -10,19 +10,26 @@ go install github.com/koonix/gofuzz@latest
 
 ## Usage
 
-Example 1:
+To run all fuzz tests in the project:
+
+```sh
+gofuzz
+```
+
+To pass arguments to `go test`, put them after a `--`:
+
 
 ```sh
 gofuzz -- -fuzztime=10s
 ```
 
-Example 2:
+To configure which fuzz tests to run and the number of tests running in parallel:
 
 ```sh
-gofuzz -parallel=5 -match='/FuzzFunc1$|^some/pkg/FuzzFunc2$' -- -fuzztime=30s -fuzzminimizetime=2m
+gofuzz -match='/FuzzFunc1$|^some/pkg/FuzzFunc2$' -parallel=5
 ```
 
-Usage:
+Full usage:
 
 ```
 Usage: gofuzz [OPTIONS...] [-- GOTESTARGS...]
