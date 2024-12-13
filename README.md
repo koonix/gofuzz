@@ -26,7 +26,7 @@ gofuzz -- -fuzztime=10s
 To configure which fuzz tests to run and the number of tests running in parallel:
 
 ```sh
-gofuzz -match='/FuzzFunc1$|^some/pkg/FuzzFunc2$' -parallel=5
+gofuzz -match='^dir1/dir2/FuzzFunc1$|/FuzzFunc2$' -parallel=5
 ```
 
 Use in GitHub Actions:
