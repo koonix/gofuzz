@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestUtils(t *testing.T) {
+func Test(t *testing.T) {
 
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -90,7 +90,9 @@ func TestUtils(t *testing.T) {
 		},
 	}
 
-	assert.Equal(t, wantSrcFiles, gotSrcFiles)
+	t.Run("Render", func(t *testing.T) {
+		assert.Equal(t, wantSrcFiles, gotSrcFiles)
+	})
 
 	// ==========
 
@@ -124,7 +126,9 @@ func TestUtils(t *testing.T) {
 		"pkg2/subpkg2/subfile4.go/Func4()",
 	}
 
-	assert.Equal(t, wantFuncs, funcs)
+	t.Run("Funcs", func(t *testing.T) {
+		assert.Equal(t, wantFuncs, funcs)
+	})
 
 	// ==========
 
@@ -145,7 +149,9 @@ func TestUtils(t *testing.T) {
 		"pkg2/subpkg2/subfile3.go/Func2()",
 	}
 
-	assert.Equal(t, wantFuncs, funcs)
+	t.Run("FuncsWithSuffix", func(t *testing.T) {
+		assert.Equal(t, wantFuncs, funcs)
+	})
 
 	// ==========
 
@@ -162,5 +168,7 @@ func TestUtils(t *testing.T) {
 		filepath.FromSlash("pkg2/subpkg2/testdata/fuzz/seed3"),
 	}
 
-	assert.Equal(t, wantSeedPaths, seedPaths)
+	t.Run("Seeds", func(t *testing.T) {
+		assert.Equal(t, wantSeedPaths, seedPaths)
+	})
 }
