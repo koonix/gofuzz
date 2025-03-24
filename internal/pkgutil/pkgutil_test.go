@@ -157,9 +157,9 @@ func TestUtils(t *testing.T) {
 	})
 
 	wantSeedPaths := []string{
-		"testdata/fuzz/seed1",
-		"pkg1/testdata/fuzz/seed2",
-		"pkg2/subpkg2/testdata/fuzz/seed3",
+		filepath.FromSlash("testdata/fuzz/seed1"),
+		filepath.FromSlash("pkg1/testdata/fuzz/seed2"),
+		filepath.FromSlash("pkg2/subpkg2/testdata/fuzz/seed3"),
 	}
 
 	assert.Equal(t, wantSeedPaths, seedPaths)
