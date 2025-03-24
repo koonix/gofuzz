@@ -157,7 +157,9 @@ func Test(t *testing.T) {
 
 	seedPaths := make([]string, 0)
 
-	pkgutil.Seeds(context.Background(), pkgInfos, func(seedFilePath string) error {
+	pkgutil.SeedCorpusFiles(context.Background(), pkgInfos, func(
+		seedFilePath string,
+	) error {
 		seedPaths = append(seedPaths, seedFilePath)
 		return nil
 	})

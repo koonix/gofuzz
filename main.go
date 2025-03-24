@@ -123,7 +123,7 @@ func main() {
 		}
 	}
 
-	err = pkgutil.Seeds(ctx, pkgInfos, func(path string) error {
+	err = pkgutil.SeedCorpusFiles(ctx, pkgInfos, func(path string) error {
 		file, err := os.Open(path)
 		if err != nil {
 			return fmt.Errorf("could not open file %q: %w", path, err)

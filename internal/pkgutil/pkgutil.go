@@ -112,9 +112,9 @@ func Funcs(
 	}
 }
 
-// Seeds calls fn with the path of the
+// SeedCorpusFiles calls fn with the path of the
 // fuzz seed corpus files of the given packages.
-func Seeds(
+func SeedCorpusFiles(
 	ctx context.Context,
 	pkgInfos []PackageInfo,
 	fn func(seedFilePath string) error,
