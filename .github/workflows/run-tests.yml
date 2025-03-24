@@ -1,0 +1,40 @@
+name: run-tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+
+  run-tests:
+
+    permissions:
+      contents: read
+
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        runner:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Run fuzz tests
+        run: go run github.com/koonix/gofuzz@latest ./... -- -fuzztime=30s
