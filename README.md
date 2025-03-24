@@ -1,6 +1,10 @@
 # gofuzz
 
-gofuzz runs Golang fuzz tests in parallel.
+Unlike regular tests,
+only a single fuzz test can be executed using the Go command.
+
+gofuzz allows running multiple or all fuzz tests in a project
+back to back or in parallel.
 
 ## Install
 
@@ -10,23 +14,31 @@ go install github.com/koonix/gofuzz@latest
 
 ## Usage
 
+Usage is similar to running regular tests.
+
+To run fuzz tests of pkg1 and pkg2:
+
+```sh
+gofuzz ./pkg1 ./dir/pkg2
+```
+
 To run all fuzz tests in the project:
 
 ```sh
-gofuzz
+gofuzz ./...
 ```
 
 To pass arguments to `go test`, put them after a `--`:
 
 
 ```sh
-gofuzz -- -fuzztime=10s
+gofuzz ./... -- -fuzztime=10s
 ```
 
 To configure which fuzz tests to run and the number of tests running in parallel:
 
 ```sh
-gofuzz -match='^dir1/dir2/FuzzFunc1$|/FuzzFunc2$' -parallel=5
+gofuzz -run='FuzzFunc1|FuzzFunc2' -parallel=5 ./... -- -fuzztime=10s
 ```
 
 Use in GitHub Actions:
@@ -43,26 +55,26 @@ Use in GitHub Actions:
         run: go test -v ./...
 
       - name: Run fuzz tests
-        run: go run github.com/koonix/gofuzz@latest -- -fuzztime=30s
+        run: go run github.com/koonix/gofuzz@latest ./... -- -fuzztime=30s
 ```
 
 Full usage:
 
 ```
-Usage: gofuzz [OPTIONS...] [-- GOTESTARGS...]
+Usage: gofuzz [OPTIONS...] [PACKAGES...] [-- GOTESTARGS...]
 
-gofuzz runs Golang fuzz tests in parallel.
+gofuzz runs multiple Go fuzz tests.
+
+PACKAGES are package patterns, as accepted by the go test command.
 GOTESTARGS are extra args passed to the go test command.
 
 Options:
+  -C string
+    	run as if the program was started in this path (default ".")
   -gotest string
     	command used for running tests, as whitespace-separated args (default "go test")
-  -list
-    	list fuzz function paths and exit
-  -match string
-    	only operate on functions where this regexp matches against "path/to/package/FuzzFuncName" (default ".")
   -parallel int
-    	max number of parallel tests (default 10)
-  -root string
-    	root dir of the go project (default ".")
+    	maximum number of fuzz tests to run simultaneously (default 1)
+  -run string
+    	run only those fuzz tests matching the regular expression (default ".")
 ```

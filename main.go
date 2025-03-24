@@ -1,284 +1,283 @@
+// Copyright 2024 the gofuzz authors.
+// SPDX-License-Identifier: Apache-2.0
+
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"go/ast"
 	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
-	"path"
-	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/koonix/gofuzz/internal/pkgutil"
 )
 
-const helpText = `Usage: gofuzz [OPTIONS...] [-- GOTESTARGS...]
+type fuzzJob struct {
+	fuzzFuncName string
+	file         pkgutil.SourceFile
+	cmd          string
+	output       []byte
+	err          error
+}
 
-gofuzz runs Golang fuzz tests in parallel.
+func main() {
+
+	conf := handleArgs()
+
+	if conf.chdir != "." {
+		err := os.Chdir(conf.chdir)
+		if err != nil {
+			die(fmt.Errorf("could not change directory to %q: %w", conf.chdir, err))
+		}
+	}
+
+	pkgs, err := pkgutil.Load(conf.packagePatterns...)
+	if err != nil {
+		die(fmt.Errorf("could not load packages %v: %w", conf.packagePatterns, err))
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		die(fmt.Errorf("could not get working directory: %w", err))
+	}
+
+	pkgInfos, srcFiles, err := pkgutil.Render(pkgs, cwd)
+	if err != nil {
+		die(fmt.Errorf("could not get package files: %w", err))
+	}
+
+	jobs, err := createFuzzJobs(srcFiles, conf.runRegexp)
+	if err != nil {
+		die(fmt.Errorf("could not create jobs: %w", err))
+	}
+
+	doneJobs := make(chan fuzzJob, 1)
+	wg := new(sync.WaitGroup)
+	sem := make(chan struct{}, conf.parallel)
+	ctx := notifyContext()
+
+	go func() {
+		defer func() {
+			wg.Wait()
+			close(doneJobs)
+		}()
+		for _, job := range jobs {
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			wg.Add(1)
+			go func() {
+				defer func() {
+					<-sem
+					wg.Done()
+				}()
+				cmd := createFuzzCmd(
+					ctx,
+					conf.gotestArgs,
+					conf.gotestExtraArgs,
+					pkgutil.Pattern(job.file.PkgInfo.Path),
+					job.fuzzFuncName,
+				)
+				job.cmd = cmd.String()
+				job.output, job.err = cmd.CombinedOutput()
+				doneJobs <- job
+			}()
+		}
+	}()
+
+	failedJobs := 0
+	init := false
+
+	for job := range doneJobs {
+		if !init {
+			fmt.Print("\n")
+			init = true
+		}
+		fmt.Printf("========== %s - %s ==========\n\n", job.fuzzFuncName, job.file.Path)
+		fmt.Printf("cmd:\n%s\n\n", job.cmd)
+		if len(job.output) > 0 {
+			for range 2 {
+				job.output = bytes.TrimSuffix(job.output, []byte{'\n'})
+			}
+			fmt.Printf("output:\n%s\n\n", job.output)
+		}
+		if job.err != nil && !strings.Contains(job.err.Error(), "exit status") {
+			fmt.Printf("error:\n%s\n\n", job.err)
+		}
+		if job.err != nil {
+			failedJobs++
+		}
+	}
+
+	err = pkgutil.Seeds(ctx, pkgInfos, func(path string) error {
+		file, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("could not open file %q: %w", path, err)
+		}
+		defer file.Close()
+		fmt.Printf("========== Seed %s ==========\n\n", path)
+		_, err = io.Copy(os.Stdout, file)
+		if err != nil {
+			return fmt.Errorf("could not copy %q to stdout: %w", path, err)
+		}
+		fmt.Printf("\n")
+		return nil
+	})
+	if err != nil {
+		fmt.Printf("==========\n\n")
+		die(err)
+	}
+
+	if failedJobs > 0 {
+		fmt.Printf("==========\n\n")
+		die("FAIL")
+	}
+}
+
+func handleArgs() (conf struct {
+	chdir           string
+	parallel        int
+	runRegexp       *regexp.Regexp
+	packagePatterns []string
+	gotestArgs      []string
+	gotestExtraArgs []string
+}) {
+
+	const helpText = `Usage: gofuzz [OPTIONS...] [PACKAGES...] [-- GOTESTARGS...]
+
+gofuzz runs multiple Go fuzz tests.
+
+PACKAGES are package patterns, as accepted by the go test command.
 GOTESTARGS are extra args passed to the go test command.
 
 Options:
 `
 
-// fuzz contains the name of a fuzz function and the package path it resides in
-type fuzz struct {
-	fn       string
-	pkg      string
-	fullpath string
-}
-
-// result contains a fuzzing result
-type result struct {
-	fuzz
-	err    error
-	output string
-}
-
-func main() {
-
-	// handle cli flags
 	flag.Usage = func() {
-		fmt.Fprint(os.Stderr, helpText)
+		fmt.Fprint(flag.CommandLine.Output(), helpText)
 		flag.PrintDefaults()
 	}
-	maxParallel := flag.Int("parallel", 10, "max number of parallel tests")
-	matchPtrn := flag.String("match", ".", `only operate on functions where this regexp matches against "path/to/package/FuzzFuncName"`)
-	root := flag.String("root", ".", "root dir of the go project")
-	goTest := flag.String("gotest", "go test", "command used for running tests, as whitespace-separated args")
-	list := flag.Bool("list", false, "list fuzz function paths and exit")
+
+	flag.StringVar(&conf.chdir, "C", ".", "run as if the program was started in this path")
+	flag.IntVar(&conf.parallel, "parallel", 1, "maximum number of fuzz tests to run simultaneously")
+	run := flag.String("run", ".", "run only those fuzz tests matching the regular expression")
+	gotest := flag.String("gotest", "go test", "command used for running tests, as whitespace-separated args")
+
+	conf.gotestExtraArgs = make([]string, 0)
+	i := slices.Index(os.Args, "--")
+	if i != -1 {
+		conf.gotestExtraArgs = os.Args[i+1:]
+		os.Args = os.Args[:i]
+	}
+
 	flag.Parse()
 
-	// check for go.mod if -root is not set
-	rootSet := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "root" {
-			rootSet = true
+	conf.runRegexp = regexp.MustCompile(*run)
+	conf.gotestArgs = strings.Fields(*gotest)
+
+	conf.packagePatterns = flag.Args()
+	if len(conf.packagePatterns) == 0 {
+		conf.packagePatterns = []string{"."}
+	}
+
+	return
+}
+
+func createFuzzJobs(
+	srcFiles []pkgutil.SourceFile,
+	re *regexp.Regexp,
+) (
+	jobs []fuzzJob,
+	err error,
+) {
+	for _, file := range srcFiles {
+		if !strings.HasSuffix(file.Path, "_test.go") {
+			continue
 		}
-	})
-	if !rootSet {
-		_, err := os.Stat("go.mod")
-		if errors.Is(err, os.ErrNotExist) {
-			die("no go.mod found in current directory.\n" +
-				"set -root explicitly to override the go.mod check.")
+		ast.Inspect(file.Node, func(node ast.Node) (descend bool) {
+			if _, ok := node.(*ast.File); ok {
+				return true
+			}
+			fn, ok := node.(*ast.FuncDecl)
+			if !ok {
+				return false
+			}
+			fuzzFuncName := fn.Name.Name
+			if !strings.HasPrefix(fuzzFuncName, "Fuzz") {
+				return false
+			}
+			if re.String() != "." && !re.MatchString(fuzzFuncName) {
+				return false
+			}
+			jobs = append(jobs, fuzzJob{
+				file:         file,
+				fuzzFuncName: fuzzFuncName,
+			})
+			return false
+		})
+	}
+	return jobs, nil
+}
+
+func createFuzzCmd(
+	ctx context.Context,
+	gotestArgs, extraArgs []string,
+	pkgPattern string,
+	fuzzFuncName string,
+) *exec.Cmd {
+
+	args := make([]string, 0, len(gotestArgs)+len(extraArgs)+3)
+
+	args = append(args, gotestArgs...)
+	args = append(args, extraArgs...)
+	re := fmt.Sprintf("^%s$", regexp.QuoteMeta(fuzzFuncName))
+	args = append(args, "-run="+re, "-fuzz="+re, pkgPattern)
+
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd.WaitDelay = 10 * time.Second
+	cmd.Cancel = func() error {
+		err := cmd.Process.Signal(os.Interrupt)
+		if err != nil && !errors.Is(err, os.ErrProcessDone) {
+			err = cmd.Process.Kill()
 		}
+		return err
 	}
 
-	// split goTest by whitespace
-	goTestFields := strings.Fields(*goTest)
+	return cmd
+}
 
-	// compile matchPtrn
-	matchRgx, err := regexp.Compile(*matchPtrn)
-	if err != nil {
-		die(fmt.Errorf("the -match regexp is invalid: %w", err))
-	}
-
-	// chdir to root
-	err = os.Chdir(*root)
-	if err != nil {
-		die(fmt.Errorf(`could not change directory to "%s": %w`, *root, err))
-	}
-
-	// context allows canceling the running commands
+// notifyContext is similar to [signal.NotifyContext]
+// but it closes the context with a cause.
+func notifyContext() context.Context {
 	ctx, cancel := context.WithCancelCause(context.Background())
-
-	// cancel the context upon receiving signals that typically terminate programs
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan,
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch,
 		os.Interrupt,
 		syscall.SIGTERM,
 		syscall.SIGHUP,
-		syscall.SIGPIPE,
-		syscall.SIGQUIT,
 	)
 	go func() {
-		for sig := range sigChan {
-			cancel(errors.New("received signal " + sig.String()))
+		for sig := range ch {
+			cancel(errors.New("signal: " + sig.String()))
+			signal.Stop(ch)
+			return
 		}
 	}()
-
-	// success indicates what the exit status of gofuzz should be
-	var success atomic.Bool
-	success.Store(true)
-
-	// exit with the appropriate status
-	defer func() {
-		if success.Load() {
-			os.Exit(0)
-		} else {
-			os.Exit(1)
-		}
-	}()
-
-	// fuzzRgx is a regexp that matches go fuzz functions
-	fuzzRgx := regexp.MustCompile(`^func\s+(Fuzz\w+)`)
-
-	// fuzzChan contains fuzz functions to run
-	fuzzChan := make(chan fuzz, 1024)
-
-	// find fuzz functions in go test files and send them to fuzzChan
-	go func() {
-		defer close(fuzzChan)
-		err := filepath.WalkDir(".", func(
-			p string,
-			entry fs.DirEntry,
-			err error,
-		) error {
-			if err != nil {
-				return err
-			}
-			if entry.IsDir() || !strings.HasSuffix(p, "_test.go") {
-				return nil
-			}
-			file, err := os.Open(p)
-			if err != nil {
-				return fmt.Errorf(`could not open file "%s": %w`, p, err)
-			}
-			defer file.Close()
-			sc := bufio.NewScanner(file)
-			for sc.Scan() {
-				matches := fuzzRgx.FindStringSubmatch(sc.Text())
-				if matches == nil || len(matches) < 2 {
-					continue
-				}
-				fn := matches[1]
-				pkg := path.Clean(path.Dir(filepath.ToSlash(p)))
-				fullpath := pkg + "/" + fn
-				if matchRgx.MatchString(fullpath) {
-					fuzzChan <- fuzz{
-						fn:       fn,
-						pkg:      pkg,
-						fullpath: fullpath,
-					}
-				}
-			}
-			err = sc.Err()
-			if err != nil {
-				return fmt.Errorf(`could not scan "%s": %w`, p, err)
-			}
-			return nil
-		})
-		if err != nil {
-			cancel(fmt.Errorf("could not walk dir: %w", err))
-			success.Store(false)
-		}
-	}()
-
-	// if the list option is set, list fuzz function paths and exit
-	if *list {
-		for fuzz := range fuzzChan {
-			fmt.Println(fuzz.fullpath)
-		}
-		return
-	}
-
-	// resultChan contains fuzzing results
-	resultChan := make(chan result, 1024)
-
-	// spawnChan is filled with data
-	// to however many go commands we want to run in parallel.
-	// we consume one datum from it before we spawn a command,
-	// and we write one datum to it after a spawned command is finished.
-	spawnChan := make(chan struct{}, 1024)
-
-	// fill spawnChan.
-	go func() {
-		for i := 0; i < *maxParallel; i++ {
-			spawnChan <- struct{}{}
-		}
-	}()
-
-	// get fuzz functions from fuzzChan and run them using `go test`
-	go func() {
-		var wg sync.WaitGroup
-		defer func() {
-			wg.Wait()
-			close(resultChan)
-			close(spawnChan)
-		}()
-		for fuzz := range fuzzChan {
-			<-spawnChan
-			args := make([]string, len(goTestFields))
-			copy(args, goTestFields)
-			args = append(args,
-				"./"+fuzz.pkg,
-				fmt.Sprintf("-run=^%s$", fuzz.fn),
-				fmt.Sprintf("-fuzz=^%s$", fuzz.fn),
-			)
-			args = append(args, flag.Args()...)
-			cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-			cmd.WaitDelay = 10 * time.Second
-			cmd.Cancel = func() error {
-				return cmd.Process.Signal(syscall.SIGTERM)
-			}
-			wg.Add(1)
-			go func() {
-				defer func() {
-					spawnChan <- struct{}{}
-					wg.Done()
-				}()
-				output, err := cmd.CombinedOutput()
-				resultChan <- result{
-					fuzz:   fuzz,
-					output: string(output),
-					err:    err,
-				}
-			}()
-		}
-	}()
-
-	// print fuzzing results
-	for r := range resultChan {
-		fmt.Printf("===== %s/%s =====\n", r.pkg, r.fn)
-		fmt.Println(r.output)
-		if r.err != nil {
-			success.Store(false)
-			if !strings.Contains(r.err.Error(), "exit status") {
-				fmt.Println(r.err)
-				fmt.Println()
-			}
-		}
-	}
-
-	// print the contents of seed corpus entry files
-	err = filepath.WalkDir(".", func(
-		path string,
-		entry fs.DirEntry,
-		err error,
-	) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		if !strings.Contains(filepath.ToSlash(path), "/testdata/fuzz/") {
-			return nil
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			return fmt.Errorf(`could not open file "%s": %w`, path, err)
-		}
-		defer file.Close()
-		fmt.Printf("===== %s =====\n", path)
-		_, err = io.Copy(os.Stdout, file)
-		if err != nil {
-			return fmt.Errorf(`io.Copy of "%s" failed: %w`, path, err)
-		}
-		fmt.Println()
-		return nil
-	})
-	if err != nil {
-		die(fmt.Errorf("could not walk dir: %w", err))
-	}
+	return ctx
 }
 
 func die(v any) {
